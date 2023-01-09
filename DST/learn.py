@@ -137,6 +137,7 @@ if __name__ == '__main__':
         pass
  
     args = parse_config()
+    print(args)
     device = torch.device('cuda')
     init_experiment(args.seed)
     os.makedirs(args.ckpt_save_path, exist_ok = True)
@@ -173,7 +174,7 @@ if __name__ == '__main__':
     from dataclass import DSTMultiWozData
     data = DSTMultiWozData( args.ckpt_save_path, args.model_name, tokenizer, args.data_path_prefix, shuffle_mode=args.shuffle_mode, 
                           data_mode='train', train_data_ratio=args.train_data_ratio, use_list_path = args.use_list_path)
-
+    import pdb; pdb.set_trace()
     print ('Start loading model...')
     from modelling.T5Model import T5Gen_Model
     if args.pretrained_path != 'None':

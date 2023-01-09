@@ -32,6 +32,7 @@ class DSTMultiWozData:
         '''
         self.use_list = use_list_path
         if use_list_path:
+            import json
             self.use_list = json.load(open(use_list_path , "r"))
 
         self.save_path = save_path
@@ -81,7 +82,7 @@ class DSTMultiWozData:
 
         import json
         if data_mode == 'train':
-            train_json_path = data_path_prefix + '/multiwoz-fine-processed-train.json'
+            train_json_path = data_path_prefix + '/train.json'
             try:
                 with open(train_json_path) as f:
                     train_raw_data = json.load(f)
@@ -109,7 +110,7 @@ class DSTMultiWozData:
 
             print ('Tokenizing raw train data...')
             train_data_id_list = self.tokenize_raw_data(train_raw_data)
-            self.train_data_list = self.flatten_data(train_data_id_list)
+            self.train_data_list = self.flatten_data(train_data_id_list, is_train = True)
             # record training data
             self.train_id2session_dict = {}
             self.train_dial_id_list = []
@@ -128,6 +129,7 @@ class DSTMultiWozData:
             raise Exception('Wrong Data Mode!!!')
         try:
             dev_json_path = data_path_prefix + '/multiwoz-fine-processed-dev.json'
+            dev_json_path = '/home/jihyunlee/pptod/data/multiwoz/data/multi-woz-fine-processed_new_bspn/multiwoz-fine-processed-dev.json'    
             with open(dev_json_path) as f:
                 dev_raw_data = json.load(f)
         except:
@@ -139,7 +141,10 @@ class DSTMultiWozData:
         dev_data_id_list = self.tokenize_raw_data(dev_raw_data)
         self.dev_data_list = self.flatten_data(dev_data_id_list)
 
-        test_json_path = data_path_prefix + '/multiwoz-fine-processed-test.json'
+        # test_json_path = data_path_prefix + '/multiwoz-fine-processed-test.json'
+        test_json_path = '/home/jihyunlee/pptod/data/multiwoz/data/multi-woz-fine-processed_new_bspn/multiwoz-fine-processed-test.json'    
+
+
         with open(test_json_path) as f:
             test_raw_data = json.load(f)
         print ('Tokenizing raw test data...')
@@ -209,12 +214,15 @@ class DSTMultiWozData:
 
                 for key in turn:
                     if key in ['dial_id', 'pointer', 'turn_domain', 'turn_num', 'aspn', 'dspn', 'aspn_reform', 'db',\
-                    'belief','curr_belief','prev_belief']:
+                    'belief','curr_belief','prev_belief', 'confidence','gtbs',  'predbs','pred_belief_dict']:
                         one_turn_dict[key] = turn[key]
                     else:
                         # only tokenize ["user", "usdx", "resp", "bspn", "bsdx", "bspn_reform", "bsdx_reform"]
                         value_text = turn[key]
-                        value_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(value_text))
+                        try:
+                            value_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(value_text))
+                        except:
+                            pdb.set_trace()
                         value_id = self.replace_sos_eos_token_id(value_id)
                         one_turn_dict[key] = value_id
                 one_sess_list.append(one_turn_dict)
@@ -260,7 +268,7 @@ class DSTMultiWozData:
         self.tokenizer.add_tokens(special_tokens)
         return special_tokens
 
-    def flatten_data(self, data):
+    def flatten_data(self, data, is_train = False):
         '''
             transform session data input turn data
             each item in session has length of (number of turns)
@@ -301,23 +309,21 @@ class DSTMultiWozData:
                 assert curr_turn['turn_num'] == turn_id # the turns should be arranged in order
                 curr_user_input = curr_turn['user']
                 curr_sys_resp = curr_turn['resp']
-                if self.use_list:
-                    curr_bspn = curr_turn['pred']
-                else:
-                    curr_bspn = curr_turn['bspn']
+                curr_bspn = curr_turn['bspn']
 
                 # construct belief state data
                 bs_input = previous_context + curr_user_input
                 bs_input = self.bs_prefix_id + [self.sos_context_token_id] + bs_input[-900:] + [self.eos_context_token_id]
                 bs_output = curr_bspn
-                if self.use_list and self.make_label_key(one_dial_id, turn_id) not in self.use_list:
-                    pass
+                dial_turn_key = self.make_label_key(one_dial_id, turn_id) 
+                if is_train and self.use_list\
+                    and (dial_turn_key not in self.use_list or self.use_list[dial_turn_key] == 'false'):
+                        pass
                 else:
                     data_list.append({'dial_id': one_dial_id,
                         'turn_num': turn_id,
                         'prev_context':previous_context,
                         'user': curr_turn['user'],
-                        'usdx': curr_turn['usdx'],
                         'resp': curr_sys_resp,
                         'bspn': curr_turn['bspn'],
                         'bspn_reform': curr_turn['bspn_reform'],
@@ -326,9 +332,10 @@ class DSTMultiWozData:
                         'bs_input': bs_input,
                         'bs_output': bs_output
                         })
-
+                        # 'usdx': curr_turn['usdx'],
                 # update context for next turn
                 previous_context = previous_context + curr_user_input + curr_sys_resp
+        print(f"data list : {len(data_list)}")
         return data_list
 
     def get_batches(self, batch_size, mode):
