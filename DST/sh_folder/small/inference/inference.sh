@@ -1,0 +1,37 @@
+python ../../../inference.py\
+    --data_path_prefix ../../../../data/multiwoz/data/multi-woz-fine-processed/\
+    --model_name t5-small\
+    --pretrained_path ../../../ckpt/small/0.1/seed1\
+    --output_save_path ../../../inference_result/small/0.1/seed1_c\
+    --number_of_gpu 1\
+    --batch_size_per_gpu 16
+
+python ../../../inference.py\
+    --data_path_prefix ../../../../data/multiwoz/data/multi-woz-fine-processed/\
+    --model_name t5-small\
+    --pretrained_path ../../../ckpt/small/0.1/seed2\
+    --output_save_path ../../../inference_result/small/0.1/seed2_c\
+    --number_of_gpu 1\
+    --batch_size_per_gpu 16
+
+python ../../../inference.py\
+    --data_path_prefix ../../../../data/multiwoz/data/multi-woz-fine-processed/\
+    --model_name t5-small\
+    --pretrained_path ../../../ckpt/small/0.1/seed3\
+    --output_save_path ../../../inference_result/small/0.1/seed3_c\
+    --number_of_gpu 1\
+    --batch_size_per_gpu 16
+python ../../../inference.py\
+    --data_path_prefix ../../../../data/multiwoz/data/multi-woz-fine-processed/\
+    --model_name t5-small\
+    --pretrained_path ../../../ckpt/small/0.1/seed4\
+    --output_save_path ../../../inference_result/small/0.1/seed4_c\
+    --number_of_gpu 1\
+    --batch_size_per_gpu 16
+python ../../../inference.py\
+    --data_path_prefix ../../../../data/multiwoz/data/multi-woz-fine-processed/\
+    --model_name t5-small\
+    --pretrained_path ../../../ckpt/small/0.1/seed5\
+    --output_save_path ../../../inference_result/small/0.1/seed5_c\
+    --number_of_gpu 1\
+    --batch_size_per_gpu 16
