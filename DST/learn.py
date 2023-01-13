@@ -5,12 +5,16 @@ import torch
 import random
 import argparse
 import operator
-import progressbar
 import torch.nn as nn
 from torch.optim import Adam
 from operator import itemgetter
 import torch.nn.functional as F
 from transformers.optimization import AdamW, get_linear_schedule_with_warmup
+import pdb
+
+from logger_conf import CreateLogger
+
+
 
 def zip_result(prediction):
     result = {}
@@ -27,7 +31,10 @@ def zip_result(prediction):
 def parse_config():
     parser = argparse.ArgumentParser()
     # dataset configuration
-    parser.add_argument('--data_path_prefix', type=str, help='The path where the data stores.')
+
+    parser.add_argument('--train_path', type=str, help='The path where the data stores.')
+    parser.add_argument('--dev_path', type=str, help='The path where the data stores.')
+    parser.add_argument('--test_path', type=str, help='The path where the data stores.')
 
     parser.add_argument('--shuffle_mode', type=str, default='shuffle_session_level', 
         help="shuffle_session_level or shuffle_turn_level, it controls how we shuffle the training data.")
@@ -85,16 +92,16 @@ def get_optimizers(model, args, train_num, optimizer_name, specify_adafactor_lr)
     ]
     overall_batch_size = args.number_of_gpu * args.batch_size_per_gpu * args.gradient_accumulation_steps
     num_training_steps = train_num * args.epoch_num // overall_batch_size
-    print ('----------')
+    logger.info('----------')
     if optimizer_name == 'adam':
-        print ('Use Adam Optimizer for Training.')
+        logger.info('Use Adam Optimizer for Training.')
         optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=num_training_steps)
     elif optimizer_name == 'adafactor':
         from transformers.optimization import Adafactor, AdafactorSchedule
-        print ('Use Adafactor Optimizer for Training.')
+        logger.info('Use Adafactor Optimizer for Training.')
         if specify_adafactor_lr:
-            print ('Specific learning rate.')
+            logger.info('Specific learning rate.')
             optimizer = Adafactor(
                 optimizer_grouped_parameters,
                 lr=1e-3,
@@ -109,7 +116,7 @@ def get_optimizers(model, args, train_num, optimizer_name, specify_adafactor_lr)
             )
             scheduler = None
         else:
-            print ('Do not specific learning rate.')
+            logger.info('Do not specific learning rate.')
             optimizer = Adafactor(optimizer_grouped_parameters, 
                 scale_parameter=True, 
                 relative_step=True, 
@@ -118,34 +125,37 @@ def get_optimizers(model, args, train_num, optimizer_name, specify_adafactor_lr)
             scheduler = AdafactorSchedule(optimizer)
     else:
         raise Exception('Wrong Optimizer Name!!!')
-    print ('----------')
+    logger.info('----------')
     return optimizer, scheduler
 
 import argparse
 if __name__ == '__main__':
+    logger = CreateLogger('main')
+
     if torch.cuda.is_available():
-        print ('Cuda is available.')
+        logger.info('Cuda is available.')
     cuda_available = torch.cuda.is_available()
     multi_gpu_training = False
     if cuda_available:
         if torch.cuda.device_count() > 1:
             multi_gpu_training = True
-            print ('Using Multi-GPU training, number of GPU is {}'.format(torch.cuda.device_count()))
+            logger.info('Using Multi-GPU training, number of GPU is {}'.format(torch.cuda.device_count()))
         else:
-            print ('Using single GPU training.')
+            logger.info('Using single GPU training.')
     else:
         pass
  
     args = parse_config()
-    print(args)
+    logger.info(args)
+
     device = torch.device('cuda')
     init_experiment(args.seed)
     os.makedirs(args.ckpt_save_path, exist_ok = True)
-    print ('Start loading data...')
+    logger.info('Start loading data...')
     assert args.model_name.startswith('t5')
     from transformers import T5Tokenizer
     if args.pretrained_path != 'None':
-        print ('Loading Pretrained Tokenizer...')
+        logger.info('Loading Pretrained Tokenizer...')
         tokenizer = T5Tokenizer.from_pretrained(args.pretrained_path)
     else:
         tokenizer = T5Tokenizer.from_pretrained(args.model_name)
@@ -172,10 +182,9 @@ if __name__ == '__main__':
         raise Exception('Wrong Specify LR Mode!!!')
 
     from dataclass import DSTMultiWozData
-    data = DSTMultiWozData( args.ckpt_save_path, args.model_name, tokenizer, args.data_path_prefix, shuffle_mode=args.shuffle_mode, 
-                          data_mode='train', train_data_ratio=args.train_data_ratio, use_list_path = args.use_list_path)
-    import pdb; pdb.set_trace()
-    print ('Start loading model...')
+    data = DSTMultiWozData( args.ckpt_save_path, args.model_name, tokenizer, args.train_path, args.dev_path,args.test_path, \
+     shuffle_mode=args.shuffle_mode, data_mode='train', train_data_ratio=args.train_data_ratio, use_list_path = args.use_list_path)
+    logger.info('Start loading model...')
     from modelling.T5Model import T5Gen_Model
     if args.pretrained_path != 'None':
         model = T5Gen_Model(args.pretrained_path, data.tokenizer, data.special_token_list, dropout=args.dropout, 
@@ -192,7 +201,7 @@ if __name__ == '__main__':
         model = model.to(device)
     else:
         pass
-    print ('Model loaded')
+    logger.info('Model loaded')
 
     optimizer, scheduler = get_optimizers(model, args, data.train_num, args.optimizer_name, specify_adafactor_lr)
     optimizer.zero_grad()
@@ -202,26 +211,26 @@ if __name__ == '__main__':
     for epoch in range(args.epoch_num):
         model.train()
         # --- training --- #
-        print ('-----------------------------------------')
-        print ('Start training at epoch %d' % epoch)
+        logger.info('-----------------------------------------')
+        logger.info('Start training at epoch %d' % epoch)
         train_iterator = data.build_iterator(batch_size=args.number_of_gpu * args.batch_size_per_gpu, mode='train')
         train_batch_num_per_epoch = int(data.train_num / (args.number_of_gpu * args.batch_size_per_gpu))
-        p = progressbar.ProgressBar(train_batch_num_per_epoch)
-        p.start()
-        p_train_idx = 0
         epoch_step, train_loss = 0, 0.
-        for _, train_batch in enumerate(train_iterator):
-            p.update(p_train_idx)
-            p_train_idx += 1
+        for train_idx, train_batch in enumerate(train_iterator):
+            if train_idx % 50 ==0 :
+                logger.info(f"Epoch {epoch} training, {train_idx}/{train_batch_num_per_epoch}")
             one_train_input_batch, one_train_output_batch = train_batch
             if len(one_train_input_batch) == 0 or len(one_train_output_batch) == 0: break
             train_batch_src_tensor, train_batch_src_mask, train_batch_input, train_batch_labels = \
             data.parse_batch_tensor(train_batch)
+            torch.cuda.synchronize()
             if cuda_available:
                 train_batch_src_tensor = train_batch_src_tensor.to(device)
                 train_batch_src_mask = train_batch_src_mask.to(device)
                 train_batch_input = train_batch_input.to(device)
                 train_batch_labels = train_batch_labels.to(device)
+            torch.cuda.synchronize()
+            
             loss = model(train_batch_src_tensor, train_batch_src_mask, train_batch_input, train_batch_labels)
             loss = loss.mean()
             loss.backward()
@@ -238,31 +247,30 @@ if __name__ == '__main__':
                 else:
                     pass
                 optimizer.zero_grad()
-        p.finish()
         train_loss = train_loss / train_batch_num_per_epoch
-        print ('At epoch %d, total update steps is %d, the total training loss is %5f' % (epoch, epoch_step, train_loss))
-        print ('++++++++++++++++++++++++++++++++++++++++++')
+        logger.info('At epoch %d, total update steps is %d, the total training loss is %5f' % (epoch, epoch_step, train_loss))
+        logger.info('++++++++++++++++++++++++++++++++++++++++++')
         # **********************************************************************
         # --- evaluation --- #
 
         from inference_utlis import batch_generate
-        print ('Start evaluation at epoch %d' % epoch)
+        logger.info('Start evaluation at epoch %d' % epoch)
         model.eval()
         with torch.no_grad():
+
             dev_batch_list = \
             data.build_all_evaluation_batch_list(eva_batch_size=args.number_of_gpu * args.batch_size_per_gpu, eva_mode='dev')
             dev_batch_num_per_epoch = len(dev_batch_list)
-            p = progressbar.ProgressBar(dev_batch_num_per_epoch)
-            print ('Number of evaluation batches is %d' % dev_batch_num_per_epoch)
-            p.start()
+            logger.info('Number of evaluation batches is %d' % dev_batch_num_per_epoch)
             all_dev_result = []
             for p_dev_idx in range(dev_batch_num_per_epoch):
-                p.update(p_dev_idx)
+                if p_dev_idx % 50 ==0 :
+                    logger.info(f"Epoch {epoch} evaluation, {p_dev_idx}/{dev_batch_num_per_epoch}")
+
                 one_inference_batch = dev_batch_list[p_dev_idx]
                 dev_batch_parse_dict = batch_generate(model, one_inference_batch, data)
                 for item in dev_batch_parse_dict:
                     all_dev_result.append(item)
-            p.finish()
 
             from compute_joint_acc import compute_jacc
             all_dev_result = zip_result(all_dev_result)
@@ -271,7 +279,7 @@ if __name__ == '__main__':
             if dev_score > max_dev_score:
                 max_dev_str = one_dev_str
                 max_dev_score = dev_score
-                print ('Saving Model...')
+                logger.info('Saving Model...')
                 model_save_path = args.ckpt_save_path + '/epoch_' + str(epoch) + '_' + one_dev_str
 
                 import os
@@ -313,16 +321,16 @@ if __name__ == '__main__':
                     delete = len(sortedFiles) - max_save_num
                     for x in range(0, delete):
                         one_folder_name = test_output_dir + '/' + sortedFiles[x][0]
-                        print (one_folder_name)
+                        logger.info(one_folder_name)
                         os.system('rm -r ' + one_folder_name)
-                print ('-----------------------------------')
+                logger.info('-----------------------------------')
                 # --------------------------------------------------------------------------------------------- #
-            print ('Currnt joint accuracy is {}, best joint accuracy is {}'.format(round(dev_score, 2), round(max_dev_score, 2)))
+            logger.info('Currnt joint accuracy is {}, best joint accuracy is {}'.format(round(dev_score, 2), round(max_dev_score, 2)))
 
-            print ('Current Result: ' + one_dev_str)
-            print ('Best Result: ' + max_dev_str)
+            logger.info('Current Result: ' + one_dev_str)
+            logger.info('Best Result: ' + max_dev_str)
 
-            print ('dev evaluation finished.')
-        print ('-----------------------------------------')
+            logger.info('dev evaluation finished.')
+        logger.info('-----------------------------------------')
         model.train()
 

@@ -2,8 +2,7 @@ import json
 import os
 from queue import PriorityQueue
 import pdb
-# percents = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]
-percents = [0.0]
+percents = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]
 seeds = [1,2,3,4,5]
 
 
@@ -15,7 +14,7 @@ for seed in seeds:
     for percent in percents:
         use_list = {}
         confidence_que = PriorityQueue()
-        peseudo_path = f'/home/jihyunlee/pptod/DST/inference_result/small/0.1/seed{seed}/train.json'
+        peseudo_path = f'/home/jihyunlee/pptod/DST/inference_result/small/0.1/seed{seed}/pseudo_processed.json'
         save_path = f"/home/jihyunlee/pptod/DST/inference_result/small/0.1/seed{seed}/list_{percent}.json"
         dataset = json.load(open(peseudo_path , "r"))
 

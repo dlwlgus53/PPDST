@@ -11,12 +11,13 @@ import torch.nn as nn
 from operator import itemgetter
 import torch.nn.functional as F
 from dst import ignore_none, default_cleaning, IGNORE_TURNS_TYPE2, paser_bs
+from logger_conf import CreateLogger
 
 def get_checkpoint_name(prefix):
     file_names = os.listdir(prefix)
     for name in file_names:
         if name.startswith('epoch'):
-            print (name)
+            logger.info(name)
             return name
 
 def zip_result(prediction):
@@ -97,7 +98,9 @@ def add_sys(data):
 def parse_config():
     parser = argparse.ArgumentParser()
     # dataset configuration
-    parser.add_argument('--data_path_prefix', type=str, help='The path where the data stores.')
+    parser.add_argument('--train_path', type=str, help='The path where the data stores.')
+    parser.add_argument('--dev_path', type=str, help='The path where the data stores.')
+    parser.add_argument('--test_path', type=str, help='The path where the data stores.')
     parser.add_argument('--shuffle_mode', type=str, default='shuffle_session_level', 
         help="shuffle_session_level or shuffle_turn_level, it controls how we shuffle the training data.")
     parser.add_argument('--add_prefix', type=str, default='True', 
@@ -114,30 +117,34 @@ def parse_config():
 
 import argparse
 if __name__ == '__main__':
+    logger = CreateLogger('inference')
     if torch.cuda.is_available():
-        print ('Cuda is available.')
+        logger.info('Cuda is available.')
     cuda_available = torch.cuda.is_available()
     multi_gpu_training = False
     if cuda_available:
         if torch.cuda.device_count() > 1:
             multi_gpu_training = True
-            print ('Using Multi-GPU training, number of GPU is {}'.format(torch.cuda.device_count()))
+            logger.info('Using Multi-GPU training, number of GPU is {}'.format(torch.cuda.device_count()))
         else:
-            print ('Using single GPU training.')
+            logger.info('Using single GPU training.')
     else:
         pass
  
     args = parse_config()
+    
+    logger.info(args)
+
     device = torch.device('cuda')
 
-    print ('Start loading data...')
+    logger.info('Start loading data...')
     assert args.model_name.startswith('t5')
 
     ckpt_name = get_checkpoint_name(args.pretrained_path)
     pretrained_path = args.pretrained_path + '/' + ckpt_name
 
     from transformers import T5Tokenizer
-    print ('Loading Pretrained Tokenizer...')
+    logger.info('Loading Pretrained Tokenizer...')
     tokenizer = T5Tokenizer.from_pretrained(pretrained_path)
 
     if args.add_prefix == 'True':
@@ -155,10 +162,10 @@ if __name__ == '__main__':
         raise Exception('Wrong Add Special Token Mode!!!')
 
     from dataclass import DSTMultiWozData
-    data = DSTMultiWozData('_', args.model_name, tokenizer, args.data_path_prefix, shuffle_mode=args.shuffle_mode, 
+    data = DSTMultiWozData('_', args.model_name, tokenizer, args.train_path, args.dev_path, args.test_path, shuffle_mode=args.shuffle_mode, 
                           data_mode='train', train_data_ratio=0.005)
 
-    print ('Start loading model...')
+    logger.info('Start loading model...')
     assert args.model_name.startswith('t5')
 
     from modelling.T5Model import T5Gen_Model
@@ -174,28 +181,26 @@ if __name__ == '__main__':
     else:
         pass
     model.eval()
-    print ('Model loaded')
+    logger.info('Model loaded')
 
     # **********************************************************************
     # --- evaluation --- #
     from inference_utlis import batch_generate
-    print ('Start evaluation...')
+    logger.info('Start evaluation...')
     with torch.no_grad():
         dev_batch_list = \
         data.build_all_evaluation_batch_list(eva_batch_size=args.number_of_gpu * args.batch_size_per_gpu, eva_mode='test')
         dev_batch_num_per_epoch = len(dev_batch_list)
 
-        p = progressbar.ProgressBar(dev_batch_num_per_epoch)
-        print ('Number of evaluation batches is %d' % dev_batch_num_per_epoch)
-        p.start()
+        logger.info('Number of evaluation batches is %d' % dev_batch_num_per_epoch)
         all_dev_result = []
         for p_dev_idx in range(dev_batch_num_per_epoch):
-            p.update(p_dev_idx)
+            if p_dev_idx % 50 ==0:
+                logger.info(f"Testing : {p_dev_idx}/{deb_batch_num_per_epoch}")
             one_inference_batch = dev_batch_list[p_dev_idx]
             dev_batch_parse_dict = batch_generate(model, one_inference_batch, data)
             for item in dev_batch_parse_dict:
                 all_dev_result.append(item)
-        p.finish()
         from compute_joint_acc import compute_jacc
         all_dev_result = zip_result(all_dev_result)
         add_dict_type(all_dev_result)
@@ -203,7 +208,7 @@ if __name__ == '__main__':
         dev_score = compute_jacc(data=all_dev_result) * 100
         one_dev_str = 'test_joint_accuracy_{}'.format(round(dev_score,2))
 
-        print ('Test Accuracy is {}'.format(dev_score))
+        logger.info('Test Accuracy is {}'.format(dev_score))
         output_save_path = args.output_save_path + '/' + one_dev_str + '.json'
         import os
         if os.path.exists(args.output_save_path):
@@ -214,4 +219,4 @@ if __name__ == '__main__':
         import json
         with open(output_save_path, 'w') as outfile:
             json.dump(all_dev_result, outfile, indent=4)
-    print ('Evaluation Completed!')
+    logger.info('Evaluation Completed!')

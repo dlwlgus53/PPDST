@@ -4,17 +4,17 @@ import random
 import numpy as np
 import json
 from torch.nn.utils import rnn
-import progressbar
 import pdb
 import ontology
 import random
 from torch.nn.utils import rnn
+from logger_conf import CreateLogger
 
 all_sos_token_list = ['<sos_b>', '<sos_a>', '<sos_r>']
 all_eos_token_list = ['<eos_b>', '<eos_a>', '<eos_r>']
 
 class DSTMultiWozData:
-    def __init__(self, save_path, model_name, tokenizer, data_path_prefix, shuffle_mode='shuffle_session_level', 
+    def __init__(self, save_path, model_name, tokenizer, train_path, dev_path, test_path, shuffle_mode='shuffle_session_level', 
         data_mode='train', add_prefix=True, add_special_decoder_token=True, train_data_ratio=1.0, use_list_path = None):
         '''
             model_name: t5-small or t5-base or t5-large
@@ -31,6 +31,8 @@ class DSTMultiWozData:
                     <sos_r>, <eos_r> for response generation
         '''
         self.use_list = use_list_path
+        self.logger = CreateLogger('dataclass')
+
         if use_list_path:
             import json
             self.use_list = json.load(open(use_list_path , "r"))
@@ -42,9 +44,9 @@ class DSTMultiWozData:
         assert self.add_special_decoder_token in [True, False]
 
         self.tokenizer = tokenizer
-        print ('Original Tokenizer Size is %d' % len(self.tokenizer))
+        self.logger.info('Original Tokenizer Size is %d' % len(self.tokenizer))
         self.special_token_list = self.add_sepcial_tokens()
-        print ('Tokenizer Size after extension is %d' % len(self.tokenizer))
+        self.logger.info('Tokenizer Size after extension is %d' % len(self.tokenizer))
         self.pad_token_id = self.tokenizer.convert_tokens_to_ids(['<_PAD_>'])[0]
         self.sos_context_token_id = self.tokenizer.convert_tokens_to_ids(['<sos_context>'])[0]
         self.eos_context_token_id = self.tokenizer.convert_tokens_to_ids(['<eos_context>'])[0]
@@ -59,20 +61,20 @@ class DSTMultiWozData:
 
         self.bos_token = self.tokenizer.convert_ids_to_tokens([self.bos_token_id])[0]
         self.eos_token = self.tokenizer.convert_ids_to_tokens([self.eos_token_id])[0]
-        print ('bos token is {}, eos token is {}'.format(self.bos_token, self.eos_token))
+        self.logger.info('bos token is {}, eos token is {}'.format(self.bos_token, self.eos_token))
 
         self.all_sos_token_id_list = []
         for token in all_sos_token_list:
             one_id = self.tokenizer.convert_tokens_to_ids([token])[0]
             self.all_sos_token_id_list.append(one_id)
-            print (self.tokenizer.convert_ids_to_tokens([one_id]))
-        print (len(self.all_sos_token_id_list))
+            self.logger.info(self.tokenizer.convert_ids_to_tokens([one_id]))
+        self.logger.info(len(self.all_sos_token_id_list))
         self.all_eos_token_id_list = []
         for token in all_eos_token_list:
             one_id = self.tokenizer.convert_tokens_to_ids([token])[0]
             self.all_eos_token_id_list.append(one_id)
-            print (self.tokenizer.convert_ids_to_tokens([one_id]))
-        print (len(self.all_eos_token_id_list))
+            self.logger.info(self.tokenizer.convert_ids_to_tokens([one_id]))
+        self.logger.info(len(self.all_eos_token_id_list))
 
         if self.add_prefix:
             bs_prefix_text = 'What is dialog state of this dialog:'
@@ -82,22 +84,15 @@ class DSTMultiWozData:
 
         import json
         if data_mode == 'train':
-            train_json_path = data_path_prefix + '/train.json'
-            try:
-                with open(train_json_path) as f:
-                    train_raw_data = json.load(f)
-            except:
-                print("there is no train data. use test data")
-                train_json_path = data_path_prefix + '/multiwoz-fine-processed-test.json'
-                with open(train_json_path) as f:
-                    train_raw_data = json.load(f)
+            with open(train_path) as f:
+                train_raw_data = json.load(f)
 
 
             self.train_data_ratio = train_data_ratio
             assert self.train_data_ratio > 0
             # few-shot learning
             if self.train_data_ratio < 1.0:
-                print ('Few-shot training setup.')
+                self.logger.info('Few-shot training setup.')
                 few_shot_num = int(len(train_raw_data) * self.train_data_ratio) + 1
                 random.shuffle(train_raw_data)
                 # randomly select a subset of training data
@@ -106,9 +101,9 @@ class DSTMultiWozData:
 
 
 
-                print ('Number of training sessions is {}'.format(few_shot_num))
+                self.logger.info('Number of training sessions is {}'.format(few_shot_num))
 
-            print ('Tokenizing raw train data...')
+            self.logger.info('Tokenizing raw train data...')
             train_data_id_list = self.tokenize_raw_data(train_raw_data)
             self.train_data_list = self.flatten_data(train_data_id_list, is_train = True)
             # record training data
@@ -127,36 +122,27 @@ class DSTMultiWozData:
             train_raw_data = []
         else:
             raise Exception('Wrong Data Mode!!!')
-        try:
-            dev_json_path = data_path_prefix + '/multiwoz-fine-processed-dev.json'
-            dev_json_path = '/home/jihyunlee/pptod/data/multiwoz/data/multi-woz-fine-processed_new_bspn/multiwoz-fine-processed-dev.json'    
-            with open(dev_json_path) as f:
-                dev_raw_data = json.load(f)
-        except:
-            print("there is no dev data. use test data")
-            dev_json_path = data_path_prefix + '/multiwoz-fine-processed-test.json'
-            with open(dev_json_path) as f:
-                dev_raw_data = json.load(f)   
-        print ('Tokenizing raw dev data...')
+        with open(dev_path) as f:
+            dev_raw_data = json.load(f)
+        self.logger.info('Tokenizing raw dev data...')
         dev_data_id_list = self.tokenize_raw_data(dev_raw_data)
         self.dev_data_list = self.flatten_data(dev_data_id_list)
 
-        # test_json_path = data_path_prefix + '/multiwoz-fine-processed-test.json'
-        test_json_path = '/home/jihyunlee/pptod/data/multiwoz/data/multi-woz-fine-processed_new_bspn/multiwoz-fine-processed-test.json'    
 
-
-        with open(test_json_path) as f:
+        with open(test_path) as f:
             test_raw_data = json.load(f)
-        print ('Tokenizing raw test data...')
+
+
+        self.logger.info('Tokenizing raw test data...')
         test_data_id_list = self.tokenize_raw_data(test_raw_data)
         self.test_data_list = self.flatten_data(test_data_id_list)
 
-        print ('The size of raw train, dev and test sets are %d, %d and %d' % \
+        self.logger.info('The size of raw train, dev and test sets are %d, %d and %d' % \
             (len(train_raw_data), len(dev_raw_data), len(test_raw_data)))
 
         self.dev_num, self.test_num = len(self.dev_data_list), len(self.test_data_list)
         if data_mode == 'train':
-            print ('train turn number is %d, dev turn number is %d, test turn number is %d' % \
+            self.logger.info('train turn number is %d, dev turn number is %d, test turn number is %d' % \
                 (len(self.train_data_list), len(self.dev_data_list), len(self.test_data_list)))
             self.shuffle_mode = shuffle_mode
             self.ordering_train_data()
@@ -203,11 +189,10 @@ class DSTMultiWozData:
 
     def tokenize_raw_data(self, raw_data_list):
         data_num = len(raw_data_list)
-        p = progressbar.ProgressBar(data_num)
-        p.start()
         all_session_list = []
         for idx in range(data_num):
-            p.update(idx)
+            if idx%50 == 0:
+                print(f"tokenize data {idx}/{data_num}")
             one_sess_list = []
             for turn in raw_data_list[idx]:
                 one_turn_dict = {}
@@ -222,12 +207,12 @@ class DSTMultiWozData:
                         try:
                             value_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(value_text))
                         except:
-                            pdb.set_trace()
+                            value_text = turn[key]
+                            continue
                         value_id = self.replace_sos_eos_token_id(value_id)
                         one_turn_dict[key] = value_id
                 one_sess_list.append(one_turn_dict)
             all_session_list.append(one_sess_list)
-        p.finish()
         assert len(all_session_list) == len(raw_data_list)
         return all_session_list
 
@@ -263,8 +248,8 @@ class DSTMultiWozData:
         """
         special_tokens = []
         special_tokens = ontology.sos_eos_tokens
-        print (special_tokens)
-        #print (special_tokens)
+        self.logger.info(special_tokens)
+        #self.logger.info(special_tokens)
         self.tokenizer.add_tokens(special_tokens)
         return special_tokens
 
@@ -326,9 +311,6 @@ class DSTMultiWozData:
                         'user': curr_turn['user'],
                         'resp': curr_sys_resp,
                         'bspn': curr_turn['bspn'],
-                        'bspn_reform': curr_turn['bspn_reform'],
-                        'bsdx': curr_turn['bsdx'],
-                        'bsdx_reform': curr_turn['bsdx_reform'],
                         'bs_input': bs_input,
                         'bs_output': bs_output
                         })
@@ -381,7 +363,7 @@ class DSTMultiWozData:
             batch_list.append(one_batch)
         out_str = 'Overall Number of datapoints is ' + str(data_num) + \
         ' Number of ' + mode + ' batches is ' + str(len(batch_list))
-        print (out_str)
+        self.logger.info(out_str)
         return batch_list
 
     def build_iterator(self, batch_size, mode):
@@ -444,11 +426,7 @@ class DSTMultiWozData:
         res_dict['dial_id'] = one_instance['dial_id']
         res_dict['turn_num'] = one_instance['turn_num']
         res_dict['user'] = self.parse_id_to_text(one_instance['user'])
-        res_dict['user'] = self.parse_id_to_text(one_instance['user'])
         res_dict['bspn'] = self.parse_id_to_text(one_instance['bspn'])
-        res_dict['bsdx'] = self.parse_id_to_text(one_instance['bsdx'])
-        res_dict['bspn_reform'] = self.parse_id_to_text(one_instance['bspn_reform'])
-        res_dict['bsdx_reform'] = self.parse_id_to_text(one_instance['bsdx_reform'])
         previous_context = one_instance['prev_context']
         curr_user_input = one_instance['user']
 
